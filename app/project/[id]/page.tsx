@@ -158,11 +158,55 @@ export default function WorkspacePage() {
     }
   }
 
+  async function handleGenerate() {
+    await updateProjectStage(id, "script");
+    await updateProjectStatus(id, "running");
+    setProject((p) => p ? { ...p, status: "running", current_stage: "script", total_cost: 0 } : null);
+    if (!hasSupabase) {
+      const newLog: LogLine = {
+        id: Math.random().toString(),
+        project_id: id,
+        level: "run",
+        message: "Starting full generation pipeline...",
+        created_at: new Date().toLocaleTimeString(),
+      };
+      setLogs([newLog]);
+    }
+  }
+
+  async function handleRender() {
+    await updateProjectStage(id, "render");
+    await updateProjectStatus(id, "running");
+    setProject((p) => p ? { ...p, status: "running", current_stage: "render" } : null);
+    if (!hasSupabase) {
+      const newLog: LogLine = {
+        id: Math.random().toString(),
+        project_id: id,
+        level: "run",
+        message: "Compiling and rendering final video...",
+        created_at: new Date().toLocaleTimeString(),
+      };
+      setLogs((prev) => [...prev, newLog]);
+    }
+  }
+
   async function regenerate(sceneId: string) {
     await updateSceneStatus(sceneId, "pending", null);
+    await updateProjectStage(id, "images");
     setScenes((arr) =>
       arr.map((s) => (s.id === sceneId ? { ...s, image_status: "pending", error_msg: null } : s))
     );
+    setProject((p) => p ? { ...p, current_stage: "images" } : null);
+    if (!hasSupabase) {
+      const newLog: LogLine = {
+        id: Math.random().toString(),
+        project_id: id,
+        level: "info",
+        message: `Scene regeneration requested.`,
+        created_at: new Date().toLocaleTimeString(),
+      };
+      setLogs((prev) => [...prev, newLog]);
+    }
   }
 
   async function editPrompt(sceneId: string) {
@@ -171,6 +215,9 @@ export default function WorkspacePage() {
     if (next == null) return;
     await updateScenePrompt(sceneId, next);
     setScenes((arr) => arr.map((s) => (s.id === sceneId ? { ...s, visual_prompt: next } : s)));
+    if (window.confirm("Do you want to regenerate the image for this scene now?")) {
+      await regenerate(sceneId);
+    }
   }
 
   if (!project) {
@@ -183,7 +230,7 @@ export default function WorkspacePage() {
 
   return (
     <>
-      <StageRail project={project} />
+      <StageRail project={project} onRender={handleRender} />
 
       <main className="ml-64 mr-[340px] p-10 overflow-y-auto bg-background min-h-screen">
         <header className="mb-12 flex justify-between items-end">
@@ -215,10 +262,10 @@ export default function WorkspacePage() {
       <ControlMonitor
         project={project}
         logs={logs}
-        onGenerate={() => setStatus("running")}
+        onGenerate={handleGenerate}
         onPause={() => setStatus("paused")}
         onResume={() => setStatus("running")}
-        onRender={() => setStatus("running")}
+        onRender={handleRender}
       />
     </>
   );

@@ -12,7 +12,7 @@ const STAGES: { name: StageName; label: string; icon: string }[] = [
   { name: "export", label: "Export", icon: "ios_share" },
 ];
 
-export default function StageRail({ project }: { project: Project }) {
+export default function StageRail({ project, onRender }: { project: Project; onRender?: () => void }) {
   const currentIdx = STAGES.findIndex((s) => s.name === project.current_stage);
 
   return (
@@ -57,7 +57,10 @@ export default function StageRail({ project }: { project: Project }) {
       </nav>
 
       <div className="pt-4 mt-auto border-t border-outline/5">
-        <button className="w-full py-3 bg-primary text-on-primary text-label-caps rounded-full shadow-lg hover:shadow-xl transition-all active:scale-95">
+        <button 
+          onClick={onRender}
+          className="w-full py-3 bg-primary text-on-primary text-label-caps rounded-full shadow-lg hover:shadow-xl transition-all active:scale-95"
+        >
           RENDER FINAL
         </button>
       </div>
