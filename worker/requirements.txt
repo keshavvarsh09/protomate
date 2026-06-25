@@ -1,0 +1,3 @@
+requests
+# plus everything pipeline_v67.py needs (installed by that script on first run):
+# google-genai, groq, edge-tts, nest_asyncio, faster-whisper, av, pillow, numpy
