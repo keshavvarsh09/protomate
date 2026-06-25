@@ -84,25 +84,51 @@ const mockProviders: ProviderKey[] = [
 
 // ---------------- fetchers -----------------------------------------------------
 export async function getProjects(): Promise<Project[]> {
-  if (!hasSupabase || !supabase) return mockProjects;
+  if (!hasSupabase || !supabase) {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_projects");
+      if (stored) return JSON.parse(stored);
+    }
+    return mockProjects;
+  }
   const { data } = await supabase.from("projects").select("*").order("created_at", { ascending: false });
   return (data as Project[]) ?? mockProjects;
 }
 
 export async function getProject(id: string): Promise<Project | null> {
-  if (!hasSupabase || !supabase) return mockProjects.find((p) => p.id === id) ?? mockProjects[0];
+  if (!hasSupabase || !supabase) {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_projects");
+      if (stored) {
+        const list = JSON.parse(stored) as Project[];
+        return list.find((p) => p.id === id) ?? null;
+      }
+    }
+    return mockProjects.find((p) => p.id === id) ?? null;
+  }
   const { data } = await supabase.from("projects").select("*").eq("id", id).single();
   return (data as Project) ?? null;
 }
 
 export async function getScenes(projectId: string): Promise<Scene[]> {
-  if (!hasSupabase || !supabase) return mockScenes.filter((s) => s.project_id === projectId);
+  if (!hasSupabase || !supabase) {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_scenes");
+      if (stored) {
+        const list = JSON.parse(stored) as Scene[];
+        return list.filter((s) => s.project_id === projectId);
+      }
+    }
+    return mockScenes.filter((s) => s.project_id === projectId);
+  }
   const { data } = await supabase.from("scenes").select("*").eq("project_id", projectId).order("order_index");
   return (data as Scene[]) ?? [];
 }
 
 export async function getLogs(projectId: string): Promise<LogLine[]> {
-  if (!hasSupabase || !supabase) return mockLogs.filter((l) => l.project_id === projectId);
+  if (!hasSupabase || !supabase) {
+    return mockLogs.filter((l) => l.project_id === projectId);
+  }
   const { data } = await supabase.from("logs").select("*").eq("project_id", projectId).order("created_at").limit(50);
   return (data as LogLine[]) ?? [];
 }
@@ -111,4 +137,71 @@ export async function getProviders(): Promise<ProviderKey[]> {
   if (!hasSupabase || !supabase) return mockProviders;
   const { data } = await supabase.from("provider_status").select("*");
   return (data as ProviderKey[]) ?? mockProviders;
+}
+
+export async function createProject(project: {
+  name: string;
+  script_text: string;
+  topic: string;
+  style: string;
+  layout: string;
+  font_style: string;
+  highlight: string;
+  budget_cap: number;
+}): Promise<Project> {
+  if (hasSupabase && supabase) {
+    const { data, error } = await supabase
+      .from("projects")
+      .insert({
+        name: project.name,
+        script_text: project.script_text,
+        topic: project.topic,
+        style: project.style,
+        layout: project.layout,
+        font_style: project.font_style,
+        highlight: project.highlight,
+        budget_cap: project.budget_cap,
+        status: "running",
+        current_stage: "script",
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    return data as Project;
+  } else {
+    const id = Math.random().toString(36).substring(2, 9);
+    const newProj: Project = {
+      id,
+      name: project.name || "Untitled Video",
+      status: "running",
+      current_stage: "script",
+      total_cost: 0,
+      budget_cap: project.budget_cap || 2.0,
+      thumbnail_url: null,
+      created_at: new Date().toISOString(),
+    };
+
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_projects");
+      const list = stored ? JSON.parse(stored) : [...mockProjects];
+      list.unshift(newProj);
+      localStorage.setItem("comet_projects", JSON.stringify(list));
+
+      const mockScenesForNew = [
+        {
+          id: `s-${id}-1`, project_id: id, order_index: 1,
+          narration: project.script_text || "This is a mock scene narration generated locally.",
+          visual_prompt: "a clean simple sketch style illustration of the concept",
+          image_url: null, image_provider: "zimage_hosted", image_status: "done",
+          error_msg: null, cost: 0.005, start_time: 0, end_time: 5,
+        }
+      ];
+      const scenesStored = localStorage.getItem("comet_scenes");
+      const scenesList = scenesStored ? JSON.parse(scenesStored) : [...mockScenes];
+      scenesList.push(...mockScenesForNew);
+      localStorage.setItem("comet_scenes", JSON.stringify(scenesList));
+    }
+
+    return newProj;
+  }
 }

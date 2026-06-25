@@ -7,3 +7,5 @@ out
 worker/projects
 __pycache__
 *.pyc
+
+.vercel

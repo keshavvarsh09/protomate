@@ -86,6 +86,14 @@ def run_project(project):
         return
 
     try:
+        # Check if pipeline_v67 exists
+        pipeline_path = Path(__file__).parent / "pipeline_v67.py"
+        if not pipeline_path.exists():
+            msg = "Error: pipeline_v67.py not found in the worker directory. Please place your pipeline file in the same folder as worker.py."
+            log(pid, "err", msg)
+            set_project(pid, status="failed")
+            return
+
         # import your pipeline (pipeline_v67.py must sit next to this file)
         from pipeline_v67 import VideoPipeline_V67
 
@@ -97,6 +105,48 @@ def run_project(project):
 
         set_project(pid, status="running", current_stage="scenes")
         log(pid, "run", "building scenes from script...")
+
+        # Parse paragraphs to build scenes
+        paragraphs = [p.strip() for p in raw.split("\n\n") if p.strip()]
+        if not paragraphs:
+            paragraphs = [p.strip() for p in raw.split("\n") if p.strip()]
+        
+        # Clear existing scenes (in case of retry)
+        try:
+            requests.delete(f"{SUPABASE_URL}/rest/v1/scenes?project_id=eq.{pid}", headers=HEAD, timeout=15)
+        except Exception as e:
+            print("Failed to clear old scenes:", e)
+
+        # Pre-populate scenes
+        for idx, para in enumerate(paragraphs):
+            narration = para
+            visual_prompt = "a visual representation of this scene"
+            
+            # Simple bold-tag parsing or line split
+            if "VISUAL:" in para.upper() and "NARRATION:" in para.upper():
+                try:
+                    parts = [line.strip() for line in para.split("\n") if line.strip()]
+                    vis_line = [l for l in parts if "VISUAL:" in l.upper()][0]
+                    nar_line = [l for l in parts if "NARRATION:" in l.upper()][0]
+                    visual_prompt = vis_line.split(":", 1)[1].strip()
+                    narration = nar_line.split(":", 1)[1].strip()
+                except Exception:
+                    pass
+
+            scene_body = {
+                "project_id": pid,
+                "order_index": idx + 1,
+                "narration": narration,
+                "visual_prompt": visual_prompt,
+                "image_status": "pending",
+                "cost": 0.0
+            }
+            try:
+                sb_insert("scenes", scene_body)
+            except Exception as e:
+                print("Failed to insert scene:", e)
+
+        log(pid, "ok", f"split script into {len(paragraphs)} scenes.")
 
         pipe = VideoPipeline_V67(
             project_name=f"comet_{pid[:8]}",
