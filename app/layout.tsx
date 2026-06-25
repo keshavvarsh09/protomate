@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Libre_Caslon_Text, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import TopNav from "@/components/TopNav";
+import AuthGuard from "@/components/AuthGuard";
 
 const headline = Libre_Caslon_Text({
   weight: ["400", "700"],
@@ -34,8 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="bg-background text-on-surface font-body antialiased min-h-screen">
-        <TopNav />
-        <div className="pt-16">{children}</div>
+        <AuthGuard>{children}</AuthGuard>
       </body>
     </html>
   );
