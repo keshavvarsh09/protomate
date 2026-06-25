@@ -75,40 +75,6 @@ def add_cost(project_id, provider, amount, ref_id=None):
     set_project(project_id, total_cost=round(cur + amount, 4))
 
 
-# ---- alibaba cloud dashscope (qwen) compatible mode ----
-def generate_qwen_text(prompt, system_instruction="You are a helpful assistant."):
-    api_key = os.environ.get("DASHSCOPE_API_KEY")
-    if not api_key:
-        return None
-    try:
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        # Using qwen2.5-7b-instruct for token efficiency and cost optimization
-        payload = {
-            "model": "qwen2.5-7b-instruct",
-            "messages": [
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 1000,
-            "temperature": 0.3
-        }
-        r = requests.post(
-            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        r.raise_for_status()
-        res = r.json()
-        return res["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"Alibaba Qwen call failed: {e}")
-        return None
-
-
 # ---- the actual run, using your existing pipeline ----
 def run_project(project):
     pid = project["id"]
@@ -136,6 +102,18 @@ def run_project(project):
         os.environ.setdefault("WAVESPEED_API_KEY", os.environ.get("WAVESPEED_API_KEY", ""))
         os.environ.setdefault("GROQ_API_KEY", os.environ.get("GROQ_API_KEY", ""))
 
+        # Initialize the pipeline at the start
+        pipe = VideoPipeline_V67(
+            project_name=f"comet_{pid[:8]}",
+            image_source=project.get("image_source", "zimage_hosted"),
+            hosted_provider=project.get("hosted_provider", "wavespeed"),
+            caption_style=str(project.get("caption_style", "2")),
+            font_style=project.get("font_style", "opensans"),
+            highlight_color=project.get("highlight", "blue"),
+            fps=int(project.get("fps", 30)),
+            zoom_total=float(project.get("zoom_total", 0.06)),
+        )
+
         stage = project.get("current_stage", "script")
 
         # ------------------- STAGE: script -------------------
@@ -143,17 +121,17 @@ def run_project(project):
             raw = project.get("script_text")
             topic = project.get("topic")
 
-            # Generate script using Alibaba Qwen if script is empty but topic exists
+            # Generate script using pipeline's LLM config if script is empty but topic exists
             if (not raw or not raw.strip()) and topic and topic.strip():
-                log(pid, "run", f"Generating script from topic using Alibaba Qwen: '{topic}'...")
-                prompt = f"Write an engaging video script about: '{topic}'. Organize it into exactly 4 scenes. For each scene, write a visual B-roll prompt and the narration text. Output ONLY the scenes in this format:\n\n**SCENE 1**\n**VISUAL:** [description]\n**NARRATION:** [narration]\n\nDo not write any introductory or concluding remarks. Keep it concise."
-                qwen_script = generate_qwen_text(prompt, "You are a professional video scriptwriter. Output strictly formatted scenes.")
-                if qwen_script:
-                    raw = qwen_script
+                log(pid, "run", f"Generating script from topic: '{topic}'...")
+                prompt = f"Generate a video script about: {topic}"
+                generated_script = pipe.format_transcript_to_script(prompt)
+                if generated_script:
+                    raw = generated_script
                     set_project(pid, script_text=raw)
-                    log(pid, "ok", "Script successfully generated via Alibaba Qwen.")
+                    log(pid, "ok", "Script successfully generated.")
                 else:
-                    log(pid, "info", "Alibaba Qwen script gen failed. Using default fallback script.")
+                    log(pid, "info", "Script gen failed. Using default fallback script.")
                     raw = f"**SCENE 1**\n**VISUAL:** A simple sketch of the concept: {topic}\n**NARRATION:** Today we are exploring {topic}."
 
             if not raw or not raw.strip():
@@ -206,18 +184,6 @@ def run_project(project):
             set_project(pid, current_stage="images")
             stage = "images"
 
-        # Initialize the pipeline for subsequent stages
-        pipe = VideoPipeline_V67(
-            project_name=f"comet_{pid[:8]}",
-            image_source=project.get("image_source", "zimage_hosted"),
-            hosted_provider=project.get("hosted_provider", "wavespeed"),
-            caption_style=str(project.get("caption_style", "2")),
-            font_style=project.get("font_style", "opensans"),
-            highlight_color=project.get("highlight", "blue"),
-            fps=int(project.get("fps", 30)),
-            zoom_total=float(project.get("zoom_total", 0.06)),
-        )
-
         # ------------------- STAGE: images -------------------
         if stage == "images" or stage == "scenes":
             scenes_data = sb_get("scenes", f"project_id=eq.{pid}&order=order_index")
@@ -248,6 +214,7 @@ def run_project(project):
                     success = pipe.fetch_image_single(idx, prompt)
                     
                     if success:
+                        # Record exact wavespeed fal cost ($0.005 per generation)
                         sb_patch("scenes", f"id=eq.{sid}", {"image_status": "done", "cost": 0.005})
                         add_cost(pid, "zimage_hosted", 0.005, f"scene_{sid}")
                         log(pid, "ok", f"Scene {idx} image generated.")
