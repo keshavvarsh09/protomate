@@ -1,5 +1,5 @@
 import { supabase, hasSupabase } from "./supabase";
-import { Project, Scene, LogLine, ProviderKey } from "./types";
+import { Project, Scene, LogLine, ProviderKey, Status, StageName } from "./types";
 
 // ---------------- mock data (used when supabase is not configured) -------------
 const mockProjects: Project[] = [
@@ -127,6 +127,13 @@ export async function getScenes(projectId: string): Promise<Scene[]> {
 
 export async function getLogs(projectId: string): Promise<LogLine[]> {
   if (!hasSupabase || !supabase) {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_logs");
+      if (stored) {
+        const list = JSON.parse(stored) as LogLine[];
+        return list.filter((l) => l.project_id === projectId);
+      }
+    }
     return mockLogs.filter((l) => l.project_id === projectId);
   }
   const { data } = await supabase.from("logs").select("*").eq("project_id", projectId).order("created_at").limit(50);
@@ -187,15 +194,49 @@ export async function createProject(project: {
       list.unshift(newProj);
       localStorage.setItem("comet_projects", JSON.stringify(list));
 
-      const mockScenesForNew = [
-        {
-          id: `s-${id}-1`, project_id: id, order_index: 1,
-          narration: project.script_text || "This is a mock scene narration generated locally.",
-          visual_prompt: "a clean simple sketch style illustration of the concept",
-          image_url: null, image_provider: "zimage_hosted", image_status: "done",
-          error_msg: null, cost: 0.005, start_time: 0, end_time: 5,
+      // Parse paragraphs to make actual scenes if they pasted a script
+      let paragraphs = (project.script_text || "")
+        .split("\n\n")
+        .map((p) => p.trim())
+        .filter(Boolean);
+      if (paragraphs.length === 0) {
+        paragraphs = (project.script_text || "")
+          .split("\n")
+          .map((p) => p.trim())
+          .filter(Boolean);
+      }
+      if (paragraphs.length === 0) {
+        paragraphs = ["This is a mock scene narration generated locally."];
+      }
+
+      const mockScenesForNew = paragraphs.map((para, index) => {
+        let narration = para;
+        let visual_prompt = "a clean simple sketch style illustration of the concept";
+        if (para.toUpperCase().includes("VISUAL:") && para.toUpperCase().includes("NARRATION:")) {
+          try {
+            const parts = para.split("\n").map(l => l.trim()).filter(Boolean);
+            const vis_line = parts.find(l => l.toUpperCase().includes("VISUAL:"));
+            const nar_line = parts.find(l => l.toUpperCase().includes("NARRATION:"));
+            if (vis_line) visual_prompt = vis_line.split(":", 2)[1].trim();
+            if (nar_line) narration = nar_line.split(":", 2)[1].trim();
+          } catch (e) {}
         }
-      ];
+        return {
+          id: `s-${id}-${index + 1}`,
+          project_id: id,
+          order_index: index + 1,
+          narration,
+          visual_prompt,
+          image_url: null,
+          image_provider: "zimage_hosted",
+          image_status: "pending" as const,
+          error_msg: null,
+          cost: 0.0,
+          start_time: index * 5,
+          end_time: (index + 1) * 5,
+        };
+      });
+
       const scenesStored = localStorage.getItem("comet_scenes");
       const scenesList = scenesStored ? JSON.parse(scenesStored) : [...mockScenes];
       scenesList.push(...mockScenesForNew);
@@ -203,5 +244,85 @@ export async function createProject(project: {
     }
 
     return newProj;
+  }
+}
+
+// ---------------- mutations -----------------------------------------------------
+
+export async function updateProjectStatus(id: string, status: Status): Promise<void> {
+  if (hasSupabase && supabase) {
+    await supabase.from("projects").update({ status }).eq("id", id);
+  } else {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_projects");
+      if (stored) {
+        const list = JSON.parse(stored) as Project[];
+        const updated = list.map((p) => (p.id === id ? { ...p, status } : p));
+        localStorage.setItem("comet_projects", JSON.stringify(updated));
+      }
+    }
+  }
+}
+
+export async function updateProjectStage(id: string, stage: StageName): Promise<void> {
+  if (hasSupabase && supabase) {
+    await supabase.from("projects").update({ current_stage: stage }).eq("id", id);
+  } else {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_projects");
+      if (stored) {
+        const list = JSON.parse(stored) as Project[];
+        const updated = list.map((p) => (p.id === id ? { ...p, current_stage: stage } : p));
+        localStorage.setItem("comet_projects", JSON.stringify(updated));
+      }
+    }
+  }
+}
+
+export async function addProjectCost(id: string, amount: number): Promise<void> {
+  if (hasSupabase && supabase) {
+    // handled on supabase / worker side, but we can do an optimistic write
+    const { data } = await supabase.from("projects").select("total_cost").eq("id", id).single();
+    const cur = data ? Number(data.total_cost) : 0;
+    await supabase.from("projects").update({ total_cost: cur + amount }).eq("id", id);
+  } else {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_projects");
+      if (stored) {
+        const list = JSON.parse(stored) as Project[];
+        const updated = list.map((p) => (p.id === id ? { ...p, total_cost: Number((p.total_cost + amount).toFixed(4)) } : p));
+        localStorage.setItem("comet_projects", JSON.stringify(updated));
+      }
+    }
+  }
+}
+
+export async function updateSceneStatus(sceneId: string, image_status: Status, error_msg: string | null): Promise<void> {
+  if (hasSupabase && supabase) {
+    await supabase.from("scenes").update({ image_status, error_msg }).eq("id", sceneId);
+  } else {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_scenes");
+      if (stored) {
+        const list = JSON.parse(stored) as Scene[];
+        const updated = list.map((s) => (s.id === sceneId ? { ...s, image_status, error_msg } : s));
+        localStorage.setItem("comet_scenes", JSON.stringify(updated));
+      }
+    }
+  }
+}
+
+export async function updateScenePrompt(sceneId: string, visual_prompt: string): Promise<void> {
+  if (hasSupabase && supabase) {
+    await supabase.from("scenes").update({ visual_prompt }).eq("id", sceneId);
+  } else {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("comet_scenes");
+      if (stored) {
+        const list = JSON.parse(stored) as Scene[];
+        const updated = list.map((s) => (s.id === sceneId ? { ...s, visual_prompt } : s));
+        localStorage.setItem("comet_scenes", JSON.stringify(updated));
+      }
+    }
   }
 }
